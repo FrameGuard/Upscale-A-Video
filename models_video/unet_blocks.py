@@ -5,7 +5,7 @@ sys.path.append(os.path.split(sys.path[0])[0])
 
 import torch
 from torch import nn
-
+import time
 try:
     from .attention import Transformer3DModel
     from .resnet import Downsample3D, ResnetBlock3D, Upsample3D, ResnetBlock3D_plus
@@ -13,7 +13,7 @@ except:
     from attention import Transformer3DModel
     from resnet import Downsample3D, ResnetBlock3D, Upsample3D, ResnetBlock3D_plus
 
-from diffusers.models.attention import AttentionBlock
+from models_video.diffusers_attention import AttentionBlock
 from einops import rearrange
 
 def get_down_block(
@@ -259,6 +259,8 @@ class UNetMidBlock3DCrossAttn(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
     def forward(self, hidden_states, temb=None, encoder_hidden_states=None, attention_mask=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
         hidden_states = self.resnets[0](hidden_states, temb)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             hidden_states = attn(hidden_states, encoder_hidden_states=encoder_hidden_states).sample
@@ -353,6 +355,8 @@ class CrossAttnDownBlock3D(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(self, hidden_states, temb=None, encoder_hidden_states=None, attention_mask=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
         output_states = ()
 
         for resnet, attn in zip(self.resnets, self.attentions):
@@ -441,6 +445,11 @@ class DownBlock3D(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(self, hidden_states, temb=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
+        self.resnets.to(dtype)
+        if temb is not None:
+            temb = temb.to(dtype)
         output_states = ()
 
         for resnet in self.resnets:
@@ -556,6 +565,8 @@ class CrossAttnUpBlock3D(nn.Module):
         upsample_size=None,
         attention_mask=None,
     ):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
             res_hidden_states = res_hidden_states_tuple[-1]
@@ -639,6 +650,12 @@ class UpBlock3D(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(self, hidden_states, res_hidden_states_tuple, temb=None, upsample_size=None):
+        hidden_states = hidden_states.to(torch.bfloat16)
+        self.resnets.to(torch.bfloat16)
+        if self.upsamplers is not None:
+            self.upsamplers.to(torch.bfloat16)
+        if temb is not None:
+            temb = temb.to(torch.bfloat16)
         for resnet in self.resnets:
             # pop res hidden states
             res_hidden_states = res_hidden_states_tuple[-1]
@@ -733,6 +750,9 @@ class UNetMidBlock3D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
     def forward(self, hidden_states, temb=None):
+        self.attentions.to(torch.bfloat16)
+        self.resnets.to(torch.bfloat16)
+        hidden_states = hidden_states.to(torch.bfloat16)
         video_length = hidden_states.shape[2]
         hidden_states = self.resnets[0](hidden_states, temb)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
@@ -849,6 +869,10 @@ class UpDecoderBlock3D(nn.Module):
             self.upsamplers = None
 
     def forward(self, hidden_states):
+        self.resnets.to(torch.bfloat16)
+        if self.upsamplers is not None:
+            self.upsamplers.to(torch.bfloat16)
+        hidden_states = hidden_states.to(torch.bfloat16)
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, temb=None)
 

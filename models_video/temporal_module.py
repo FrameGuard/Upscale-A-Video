@@ -6,6 +6,7 @@ import numpy as np
 import torch.nn.functional as F
 from torch import nn
 import torchvision
+import os
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
@@ -173,6 +174,8 @@ class TemporalModule3D(nn.Module):
 
 
     def forward(self, hidden_states, w=1, encoder_hidden_states=None, timesteps=None, temb=None, attention_mask=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
         input_tensor = hidden_states
             
         # 3DCNN

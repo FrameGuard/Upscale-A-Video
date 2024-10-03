@@ -13,6 +13,7 @@ from PIL import Image
 import math
 import time
 import glob as gb
+import gc
 
 
 class LLavaAgent:
@@ -101,8 +102,23 @@ class LLavaAgent:
             img_captions.append(output)
         return img_captions
 
+    def unload_model(self):
+        """Unload model from GPU memory and destroy all objects."""
+        if hasattr(self, 'model'):
+            del self.model
+        if hasattr(self, 'image_processor'):
+            del self.image_processor
+        if hasattr(self, 'tokenizer'):
+            del self.tokenizer
+        if hasattr(self, 'input_ids'):
+            del self.input_ids
+        
+        torch.cuda.empty_cache()
+        gc.collect()
+
 
 if __name__ == '__main__':
     llava_agent = LLavaAgent("/opt/data/private/AIGC_pretrain/LLaVA1.5/llava-v1.5-13b")
     img = [Image.open('/opt/data/private/LV_Dataset/DiffGLV-Test-All/RealPhoto60/LQ/02.png')]
     caption = llava_agent.gen_image_caption(img)
+    llava_agent.unload_model()

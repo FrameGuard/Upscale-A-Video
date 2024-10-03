@@ -16,6 +16,8 @@ import inspect
 from typing import Any, Callable, List, Optional, Union
 from tqdm import tqdm
 
+import os
+import time
 import numpy as np
 import math
 import PIL
@@ -101,12 +103,19 @@ class VideoUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
         )
         self.register_to_config(max_noise_level=max_noise_level)
 
-    def to(self, device):
-        self.vae = self.vae.to(device)
-        self.text_encoder = self.text_encoder.to(device)
-        self.unet = self.unet.to(device)
-        if self.propagator is not None:
-            self.propagator = self.propagator.to(device)
+    def to(self, device, dtype):
+        if dtype == torch.float16:
+            self.vae = self.vae.to(device, dtype)
+            self.text_encoder = self.text_encoder.to(device, dtype)
+            self.unet = self.unet.to(device, dtype)
+            if self.propagator is not None:
+                self.propagator = self.propagator.to(device, dtype)
+        else:
+            self.vae = self.vae.to(device)
+            self.text_encoder = self.text_encoder.to(device)
+            self.unet = self.unet.to(device)
+            if self.propagator is not None:
+                self.propagator = self.propagator.to(device)
         
         return super(VideoUpscalePipeline, self).to(device)
 
@@ -498,6 +507,7 @@ class VideoUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
                 Whether or not to return a [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] instead of a
                 plain tuple.
         """
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
 
         # 1. Check inputs
         self.check_inputs(
@@ -536,10 +546,11 @@ class VideoUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
         )
+        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
         # 4. Preprocess image
         # image = preprocess(image)
-        image_dec = image.clone().to(dtype=torch.float32, device=device)
+        image_dec = image.clone().to(dtype=dtype, device=device)
         image = image.to(dtype=prompt_embeds.dtype, device=device)
 
         # 5. Add noise to image
@@ -592,9 +603,9 @@ class VideoUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
 
         # 9. Denoising loop
         if not propagation_steps == []:
-            print(" "*8 + "Propagation steps: " + str(propagation_steps))
+            print(f" "*8 + f"Propagation steps: {propagation_steps}")
         else:
-            print(" "*8 + "Propagation steps: None")
+            print(f" "*8 + "Propagation steps: None")
 
         with tqdm(total=num_inference_steps, leave=True) as progress_bar:
             progress_bar.set_description(" "*8 + "Denoising")
@@ -665,7 +676,7 @@ class VideoUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
 
         # 10. Post-processing
         # make sure the VAE is in float32 mode, as it overflows in float16
-        self.vae.to(dtype=torch.float32)
+        self.vae.to(dtype=dtype)
         latents = latents.float()
 
         # TODO(Patrick, William) - clean up when attention is refactored
@@ -679,6 +690,7 @@ class VideoUpscalePipeline(DiffusionPipeline, TextualInversionLoaderMixin):
             self.vae.decoder.mid_block.to(latents.dtype)
         else:
             latents = latents.float()
+        latents = latents.to(dtype=dtype)
 
         latents_out = latents.clone()
         # 11. Convert to frames

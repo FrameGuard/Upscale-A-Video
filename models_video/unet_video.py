@@ -426,6 +426,9 @@ class UNetVideoModel(ModelMixin, ConfigMixin):
             [`~models.unet_2d_condition.UNet2DConditionOutput`] if `return_dict` is True, otherwise a `tuple`. When
             returning a tuple, the first element is the sample tensor.
         """
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
+        sample = sample.to(dtype)
         # By default samples have to be AT least a multiple of the overall upsampling factor.
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layears).
         # However, the upsampling interpolation output size can be forced to fit any upsampling size
@@ -458,10 +461,10 @@ class UNetVideoModel(ModelMixin, ConfigMixin):
         if not torch.is_tensor(timesteps):
             # This would be a good case for the `match` statement (Python 3.10+)
             is_mps = sample.device.type == "mps"
-            if isinstance(timestep, float):
-                dtype = torch.float32 if is_mps else torch.float64
-            else:
-                dtype = torch.int32 if is_mps else torch.int64
+            # if isinstance(timestep, float):
+            #     dtype = torch.float32 if is_mps else torch.float64
+            # else:
+            #     dtype = torch.int32 if is_mps else torch.int64
             timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
@@ -474,7 +477,8 @@ class UNetVideoModel(ModelMixin, ConfigMixin):
         # timesteps does not contain any weights and will always return f32 tensors
         # but time_embedding might actually be running in fp16. so we need to cast here.
         # there might be better ways to encapsulate this.
-        t_emb = t_emb.to(dtype=self.dtype)
+        t_emb = t_emb.to(dtype=dtype)
+        self.time_embedding.to(dtype=dtype)
         emb = self.time_embedding(t_emb)
 
         if self.class_embedding is not None:
@@ -492,6 +496,8 @@ class UNetVideoModel(ModelMixin, ConfigMixin):
 
 
         # pre-process
+        sample = sample.to(dtype)
+        self.conv_in.to(dtype)
         sample = self.conv_in(sample)
 
         # down

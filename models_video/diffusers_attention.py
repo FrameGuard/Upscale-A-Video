@@ -18,6 +18,7 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 from torch import nn
+import os
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
@@ -287,7 +288,7 @@ class AttentionBlock(nn.Module):
         self.rescale_output_factor = rescale_output_factor
         self.proj_attn = nn.Linear(channels, channels, 1)
 
-        self._use_memory_efficient_attention_xformers = False
+        self._use_memory_efficient_attention_xformers = True
 
     def set_use_memory_efficient_attention_xformers(self, use_memory_efficient_attention_xformers: bool, attention_op: None):
         if not is_xformers_available():
@@ -348,16 +349,16 @@ class AttentionBlock(nn.Module):
         value_proj = self.reshape_heads_to_batch_dim(value_proj)
 
         if self._use_memory_efficient_attention_xformers:
-            # Memory efficient attention
-            hidden_states = xformers.ops.memory_efficient_attention(query_proj, key_proj, value_proj, attn_bias=None)
-            hidden_states = hidden_states.to(query_proj.dtype)
+            hidden_states = xformers.ops.memory_efficient_attention(
+                query_proj, key_proj, value_proj, attn_bias=None
+            )
         else:
             attention_scores = torch.baddbmm(
                 torch.empty(
                     query_proj.shape[0],
                     query_proj.shape[1],
                     key_proj.shape[1],
-                    dtype=query_proj.dtype,
+                    dtype=self.dtype,
                     device=query_proj.device,
                 ),
                 query_proj,

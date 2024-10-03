@@ -12,15 +12,19 @@ warnings.simplefilter('ignore', FutureWarning)
 import logging
 logging.getLogger("imageio_ffmpeg").setLevel(logging.ERROR)
 import transformers
+import traceback
 transformers.logging.set_verbosity_error()
 
 import os
+os.environ["TENSOR_DTYPE"] = "bfloat16"
+# os.environ["TENSOR_DTYPE"] = "float32"
 import cv2
 import argparse
 import sys
 o_path = os.getcwd()
 sys.path.append(o_path)
 
+import gc
 import torch
 import torch.cuda
 import time
@@ -97,6 +101,9 @@ if __name__ == '__main__':
     ## load upsacale-a-video
     print('Loading Upscale-A-Video')
 
+    frame_size = (270, 480)
+    RESULT_UPSCALING_FACTOR = 4
+    dtype = torch.float16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
     # load low_res_scheduler, text_encoder, tokenizer
     pipeline = VideoUpscalePipeline.from_pretrained("./pretrained_models/upscale_a_video", torch_dtype=torch.float16)
 
@@ -128,8 +135,7 @@ if __name__ == '__main__':
         raft, propagator = None, None
 
     pipeline.propagator = propagator
-    pipeline = pipeline.to(UAV_device)
-
+    pipeline = pipeline.to(UAV_device, dtype=dtype)
     ## load LLaVA
     if use_llava:
         llava_agent = LLavaAgent(LLAVA_MODEL_PATH, device=LLaVA_device, load_8bit=args.load_8bit_llava, load_4bit=False)
@@ -149,9 +155,20 @@ if __name__ == '__main__':
         raise ValueError(f"Invalid input: '{args.input_path}' should be a path to a video file \
             or a folder containing videos.")
 
+    SECONDS_TO_HANDLE = 1
     ## ---------------------- start inferencing ----------------------
     for i, video_path in enumerate(video_list):
-        vframes, fps, size, video_name = read_frame_from_videos(video_path)
+        vframes, fps, size, video_name = read_frame_from_videos(video_path, size=frame_size)
+        print('Video name:', video_name)
+        print('Frames count:', vframes.shape[0])
+        print('Frame size:', vframes.shape[2:4])
+        print('FPS:', fps)
+        print('Size:', size)
+        FRAMES_LIMIT = SECONDS_TO_HANDLE * round(fps)
+        if vframes.shape[0] > FRAMES_LIMIT:
+            vframes = vframes[:FRAMES_LIMIT]
+            print(f'Take first {FRAMES_LIMIT} frames')
+        
         index_str = f'[{i+1}/{len(video_list)}]'
         print(f'{index_str} Processing video: ', video_name)
 
@@ -172,6 +189,7 @@ if __name__ == '__main__':
 
             wrapped_caption = textwrap.indent(textwrap.fill('Caption: '+video_caption, width=80), ' ' * 8)
             print(wrapped_caption)
+            llava_agent.unload_model()
         else:
             video_caption = ''
 
@@ -208,8 +226,8 @@ if __name__ == '__main__':
             # tile_height = tile_width = 320
             tile_height = tile_width = args.tile_size
             tile_overlap_height = tile_overlap_width = 64 # should be >= 64
-            output_h = h * 4
-            output_w = w * 4
+            output_h = h * RESULT_UPSCALING_FACTOR
+            output_w = w * RESULT_UPSCALING_FACTOR
             output_shape = (b, c, t, output_h, output_w)  
             # start with black image
             output = vframes.new_zeros(output_shape)
@@ -226,6 +244,7 @@ if __name__ == '__main__':
                 tiles_y = tiles_y - 1 
                 rm_end_pad_h = False
 
+            print(f'{index_str} Processing the video w/ tile patches [{tiles_x}x{tiles_y}]...')  
             # loop over all tiles
             for y in range(tiles_y):
                 for x in range(tiles_x):
@@ -258,6 +277,8 @@ if __name__ == '__main__':
                         
                     # upscale tile
                     try:
+                        torch.cuda.empty_cache()
+                        gc.collect()
                         with torch.no_grad():
                             output_tile = pipeline(
                                 prompt,
@@ -271,33 +292,38 @@ if __name__ == '__main__':
                                 propagation_steps=args.propagation_steps,
                             ).images # C T H W [-1, 1]
                     except RuntimeError as error:
+                        traceback.print_exc()
                         print('Error', error)
+                        raise error
 
                     # output tile area on total image
-                    output_start_x = input_start_x * 4
+                    output_start_x = input_start_x * RESULT_UPSCALING_FACTOR
                     if x == tiles_x-1 and rm_end_pad_w == False:
                         output_end_x = output_w
                     else:
-                        output_end_x = input_end_x * 4
+                        output_end_x = input_end_x * RESULT_UPSCALING_FACTOR
 
-                    output_start_y = input_start_y * 4
+                    output_start_y = input_start_y * RESULT_UPSCALING_FACTOR
                     if y == tiles_y-1 and rm_end_pad_h == False:
                         output_end_y = output_h
                     else:
-                        output_end_y = input_end_y * 4
+                        output_end_y = input_end_y * RESULT_UPSCALING_FACTOR
 
                     # output tile area without padding
-                    output_start_x_tile = (input_start_x - input_start_x_pad) * 4
+                    output_start_x_tile = (input_start_x - input_start_x_pad) * RESULT_UPSCALING_FACTOR
                     if x == tiles_x-1 and rm_end_pad_w == False:
                         output_end_x_tile = output_start_x_tile + output_w - output_start_x
                     else:
-                        output_end_x_tile = output_start_x_tile + input_tile_width * 4
-                    output_start_y_tile = (input_start_y - input_start_y_pad) * 4
+                        output_end_x_tile = output_start_x_tile + input_tile_width * RESULT_UPSCALING_FACTOR
+                    output_start_y_tile = (input_start_y - input_start_y_pad) * RESULT_UPSCALING_FACTOR
                     if y == tiles_y-1 and rm_end_pad_h == False:
                         output_end_y_tile = output_start_y_tile + output_h - output_start_y
                     else:
-                        output_end_y_tile = output_start_y_tile + input_tile_height * 4
+                        output_end_y_tile = output_start_y_tile + input_tile_height * RESULT_UPSCALING_FACTOR
 
+                    print('input_tile.shape', input_tile.shape)
+                    print('output_tile.shape', output_tile.shape)
+                    
                     # put tile into output image
                     output[:, :, :, output_start_y:output_end_y, output_start_x:output_end_x] = \
                         output_tile[:, :, :, output_start_y_tile:output_end_y_tile,
@@ -305,6 +331,8 @@ if __name__ == '__main__':
         else:
             print(f'{index_str} Processing the video w/o tile...')
             try:
+                torch.cuda.empty_cache()
+                gc.collect()
                 with torch.no_grad():
                     output = pipeline(
                         prompt,
@@ -318,7 +346,9 @@ if __name__ == '__main__':
                         propagation_steps=args.propagation_steps,
                     ).images # C T H W [-1, 1]
             except RuntimeError as error:
+                traceback.print_exc()
                 print('Error', error)
+                raise error
 
         # color correction
         if args.color_fix in ['AdaIn', 'Wavelet']:
@@ -353,11 +383,19 @@ if __name__ == '__main__':
         # save video
         save_video_root = os.path.join(args.output_path, 'video')
         os.makedirs(save_video_root, exist_ok=True)
-        save_video_path = f"{save_video_root}/{save_name}.mp4"
+        vae_type = 'vae_video' if args.use_video_vae else 'vae_3d'
+        save_video_path = f"{save_video_root}/{save_name}_scale{RESULT_UPSCALING_FACTOR}_{vae_type}_{os.environ['TENSOR_DTYPE']}_cv2.mp4"
         upscaled_video = (output / 2 + 0.5).clamp(0, 1) * 255
         upscaled_video = rearrange(upscaled_video, 't c h w -> t h w c').contiguous()
         upscaled_video = upscaled_video.cpu().numpy().astype(np.uint8)
-        imageio.mimwrite(save_video_path, upscaled_video, fps=fps, quality=8, output_params=["-loglevel", "error"]) # Highest quality is 10, lowest is 0
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(save_video_path, fourcc, fps, (upscaled_video.shape[2], upscaled_video.shape[1]))
+        for frame in upscaled_video:
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            video_writer.write(frame_bgr)
+        video_writer.release()
+
         print(f'{index_str} Saving upscaled video... time (sec): {run_time:.2f} \n')
 
     print(f'\nAll video results are saved in {save_video_path}')

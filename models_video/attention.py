@@ -94,7 +94,9 @@ class CrossAttention(nn.Module):
         else:
             self.group_norm = None
 
-        self.to_q = nn.Linear(query_dim, inner_dim, bias=bias)
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        
+        self.to_q = nn.Linear(query_dim, inner_dim, bias=bias, dtype=dtype)
         self.to_k = nn.Linear(cross_attention_dim, inner_dim, bias=bias)
         self.to_v = nn.Linear(cross_attention_dim, inner_dim, bias=bias)
 
@@ -146,6 +148,11 @@ class CrossAttention(nn.Module):
         self._slice_size = slice_size
 
     def forward(self, hidden_states, encoder_hidden_states=None, attention_mask=None, use_image_num=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype=dtype)
+        self.to_q.to(dtype=dtype)
+        self.to_k.to(dtype=dtype)
+        self.to_v.to(dtype=dtype)
         batch_size, sequence_length, _ = hidden_states.shape
 
         encoder_hidden_states = encoder_hidden_states

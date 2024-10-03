@@ -262,6 +262,13 @@ class ResnetBlock3D(nn.Module):
             self.conv_shortcut = InflatedConv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
 
     def forward(self, input_tensor, temb=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
+        if temb is not None:
+            temb = temb.to(dtype)
+        if self.time_emb_proj is not None:
+            self.time_emb_proj.to(dtype)
+        
         hidden_states = input_tensor
 
         hidden_states = self.norm1(hidden_states)
@@ -462,6 +469,8 @@ class ResnetBlock3D_plus(nn.Module):
                                              padding=(1,1,1), padding_mode='zeros')) # to be release
 
     def forward(self, input_tensor, temb=None):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
         hidden_states = input_tensor
 
         hidden_states = self.norm1(hidden_states)

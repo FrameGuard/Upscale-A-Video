@@ -14,6 +14,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -363,6 +364,9 @@ class Decoder(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(self, z, img=None, w_lr=1.0):
+        dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+        self.to(dtype)
+        z = z.to(dtype)
         sample = z
         sample = self.conv_in(sample)
 

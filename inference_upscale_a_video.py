@@ -103,9 +103,9 @@ if __name__ == '__main__':
 
     frame_size = (270, 480)
     RESULT_UPSCALING_FACTOR = 4
-    dtype = torch.float16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
+    dtype = torch.bfloat16 if os.environ.get("TENSOR_DTYPE") == "bfloat16" else torch.float32
     # load low_res_scheduler, text_encoder, tokenizer
-    pipeline = VideoUpscalePipeline.from_pretrained("./pretrained_models/upscale_a_video", torch_dtype=torch.float16)
+    pipeline = VideoUpscalePipeline.from_pretrained("./pretrained_models/upscale_a_video", torch_dtype=torch.bfloat16)
 
     # load vae
     if args.use_video_vae:

@@ -85,8 +85,8 @@ class CrossAttention(nn.Module):
         # You can set slice_size with `set_attention_slice`
         self.sliceable_head_dim = heads
         self._slice_size = None
-        self._use_memory_efficient_attention_xformers = False
-        # self._use_memory_efficient_attention_xformers = True
+        # self._use_memory_efficient_attention_xformers = False
+        self._use_memory_efficient_attention_xformers = True
         self.added_kv_proj_dim = added_kv_proj_dim
 
         if norm_num_groups is not None:
@@ -689,6 +689,7 @@ class TemporalAttention(CrossAttention):
             hidden_states = self._memory_efficient_attention_xformers(query, key, value, attention_mask)
             # Some versions of xformers return output in fp32, cast it back to the dtype of the input
             hidden_states = hidden_states.to(query.dtype)
+            hidden_states = hidden_states.reshape(batch_size, sequence_length, -1)
         else:
             if self._slice_size is None or query.shape[0] // self._slice_size == 1:
                 hidden_states = self._attention(query, key, value, attention_mask, time_rel_pos_bias)
